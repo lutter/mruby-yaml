@@ -6,56 +6,73 @@ MRuby::Gem::Specification.new('mruby-yaml') do |spec|
   spec.homepage = 'https://github.com/AndrewBelt/mruby-yaml'
   spec.linker.libraries << 'yaml'
 
-  require 'open3'
+  def spec.bundle_libyaml
+    yaml_version = "0.1.7"
+    yaml_dir = "#{build_dir}/yaml-#{yaml_version}"
+    yaml_tar = "#{build_dir}/yaml-#{yaml_version}.tar.gz"
+    yaml_url = "http://pyyaml.org/download/libyaml/yaml-#{yaml_version}.tar.gz"
+    yaml_lib = "#{yaml_dir}/build/lib/libyaml.a"
 
-  yaml_version = "0.1.6"
-  yaml_dir = "#{build_dir}/yaml-#{yaml_version}"
-
-  def run_command env, command
-    STDOUT.sync = true
-    puts "build: [exec] #{command}"
-    Open3.popen2e(env, command) do |stdin, stdout, thread|
-      print stdout.read
-      fail "#{command} failed" if thread.value != 0
-    end
-  end
-
-  FileUtils.mkdir_p build_dir
-
-  if ! File.exists? yaml_dir
-    Dir.chdir(build_dir) do
-      e = {}
-      run_command e, "curl http://pyyaml.org/download/libyaml/yaml-#{yaml_version}.tar.gz | tar -xzv"
-      run_command e, "mkdir #{yaml_dir}/build"
-    end
-  end
-
-  if ! File.exists? "#{yaml_dir}/build/lib/libyaml.a"
-    Dir.chdir yaml_dir do
-      e = {
-        'CC' => "#{spec.build.cc.command} #{spec.build.cc.flags.join(' ')}",
-        'CXX' => "#{spec.build.cxx.command} #{spec.build.cxx.flags.join(' ')}",
-        'LD' => "#{spec.build.linker.command} #{spec.build.linker.flags.join(' ')}",
-        'AR' => spec.build.archiver.command,
-        'PREFIX' => "#{yaml_dir}/build"
-      }
-
-      configure_opts = %w(--prefix=$PREFIX --enable-static --disable-shared)
-      if build.kind_of?(MRuby::CrossBuild) && build.host_target && build.build_target
-        configure_opts += %W(--host #{spec.build.host_target} --build #{spec.build.build_target})
-        if %w(x86_64-w64-mingw32 i686-w64-mingw32).include?(build.host_target)
-          e["CFLAGS"] = "-DYAML_DECLARE_STATIC"
-          spec.cc.flags << "-DYAML_DECLARE_STATIC"
-        end
-        e['LD'] = "x86_64-w64-mingw32-ld #{spec.build.linker.flags.join(' ')}" if build.host_target == 'x86_64-w64-mingw32'
-        e['LD'] = "i686-w64-mingw32-ld #{spec.build.linker.flags.join(' ')}" if build.host_target == 'i686-w64-mingw32'
+    def run_command(env, command)
+      unless system(env, command)
+        fail "#{command} failed"
       end
-      run_command e, "./configure #{configure_opts.join(" ")}"
-      run_command e, "make"
-      run_command e, "make install"
     end
+
+    file yaml_tar do |t|
+      FileUtils.mkdir_p build_dir
+      Dir.chdir(build_dir) do
+        e = {}
+        run_command e, "curl -s -O http://pyyaml.org/download/libyaml/yaml-#{yaml_version}.tar.gz"
+      end
+    end
+
+    file yaml_dir => yaml_tar do |t|
+      # We don't care about timestamps, just whether the dir exists
+      unless File::directory?(yaml_dir)
+        FileUtils.mkdir_p build_dir
+        Dir.chdir(build_dir) do
+          e = {}
+          run_command e, "tar xzf #{yaml_tar}"
+        end
+      end
+    end
+
+    file yaml_lib => yaml_dir do |t|
+      #require 'pry'
+      #binding.pry
+      FileUtils.mkdir_p("#{yaml_dir}/build")
+      Dir.chdir(yaml_dir) do
+        e = {
+          'CC' => "#{cc.command} #{cc.flags.join(' ')}",
+          'CXX' => "#{cxx.command} #{cxx.flags.join(' ')}",
+          'LD' => "#{build.linker.command} #{linker.flags.join(' ')}",
+          'AR' => archiver.command,
+          'PREFIX' => "#{yaml_dir}/build"
+        }
+
+        configure_opts = %w(--prefix=$PREFIX --enable-static --disable-shared)
+        if build.kind_of?(MRuby::CrossBuild) &&
+            build.host_target && build.build_target
+          configure_opts += %W(--host #{build.host_target} --build #{build.build_target})
+          if ['x86_64-w64-mingw32',
+              'i686-w64-mingw32'].include?(build.host_target)
+            e["CFLAGS"] = "-DYAML_DECLARE_STATIC"
+            cc.flags << "-DYAML_DECLARE_STATIC"
+            e['LD'] = "#{build.host_target}-ld #{build.linker.flags.join(' ')}"
+          end
+        end
+        run_command e, "./configure #{configure_opts.join(" ")}"
+        run_command e, "make"
+        run_command e, "make install"
+      end
+    end
+
+    file "#{dir}/src/yaml.c" => yaml_lib
+
+    cc.include_paths << "#{yaml_dir}/build/include"
+    linker.library_paths << "#{yaml_dir}/build/lib/"
   end
 
-  spec.cc.include_paths << "#{yaml_dir}/build/include"
-  spec.linker.library_paths << "#{yaml_dir}/build/lib/"
+  spec.bundle_libyaml
 end
