@@ -35,12 +35,11 @@ MRuby::Gem::Specification.new('mruby-yaml') do |spec|
           e = {}
           run_command e, "tar xzf #{yaml_tar}"
         end
+        touch yaml_dir
       end
     end
 
     file yaml_lib => yaml_dir do |t|
-      #require 'pry'
-      #binding.pry
       FileUtils.mkdir_p("#{yaml_dir}/build")
       Dir.chdir(yaml_dir) do
         e = {
@@ -68,9 +67,10 @@ MRuby::Gem::Specification.new('mruby-yaml') do |spec|
       end
     end
 
-    file "#{dir}/src/yaml.c" => yaml_lib
+    file "#{build_dir}/src/yaml.o" => [ "#{dir}/src/yaml.c", yaml_dir ]
 
-    cc.include_paths << "#{yaml_dir}/build/include"
+    build.libmruby << yaml_lib
+    cc.include_paths << "#{yaml_dir}/include"
     linker.library_paths << "#{yaml_dir}/build/lib/"
   end
 
